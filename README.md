@@ -8,8 +8,8 @@ PatchCore anomaly detection and CPU-only inference.
 Download the portable Windows application or the separate model bundle from
 [Releases](https://github.com/syauqeehensem/C4-Inspector/releases).
 
-- `C4Inspector-v1.0.0-windows-x64.zip`: complete application, CPU runtime, and model.
-- `C4Inspector-model-v1.0.0.zip`: model weights and runtime metadata for source use.
+- `C4Inspector-v1.0.1-windows-x64.zip`: complete application, CPU runtime, and model.
+- `C4Inspector-model-v1.0.1.zip`: model weights and runtime metadata for source use.
 
 For the portable application, extract the entire archive and run
 `C4Inspector.exe`. Keep `_internal` and `c4_model` beside it. Python, CUDA, and
@@ -78,6 +78,15 @@ To build a new portable folder:
 The build refuses to overwrite an existing release folder. It creates a package
 inventory and SHA-256 manifest. Use `-DistRoot .\release_next` for another build.
 No training libraries, torchvision, Lightning, anomalib, or GPU are needed at runtime.
+
+The updated builder explicitly bundles Microsoft's signed x64 C++ runtime DLLs,
+including `vcruntime140_threads.dll`. Install the current Microsoft Visual C++
+x64 runtime on the build PC, or use `-VCRuntimeDirectory` to select its x64
+redistributable DLL directory. The original v1.0.0 archive omitted the threading
+DLL and could fail with WinError 126 on a PC without the current runtime. A
+corrected complete build is needed; moving the old package to C: is not a fix.
+Portable builds still require supported x64 Windows, a compatible CPU, RAM, and
+disk space. They do not make the model independent of hardware or OS support.
 
 ## Hardware and Verification
 

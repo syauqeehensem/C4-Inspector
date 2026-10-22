@@ -3,6 +3,17 @@
 Extract the complete portable archive and run `C4Inspector.exe`. Keep `_internal`
 and `c4_model` beside the executable. No Python installation or GPU is required.
 
+Corrected builds include Microsoft's signed x64 C++ runtime DLLs in `_internal`,
+including `vcruntime140_threads.dll`. The original v1.0.0 package omitted that
+DLL and could report WinError 126 while loading PyTorch's `shm.dll` on PCs
+without the current C++ runtime. Extract the complete corrected build into a
+new folder rather than merging it into an older installation. No separate C++
+runtime installation is intended to be needed with the corrected build.
+
+The application still requires supported 64-bit Windows, a compatible x64 CPU,
+sufficient RAM, and writable disk space. It is not hardware-independent. Do not
+download individual DLLs from unofficial websites or modify Windows system DLLs.
+
 1. Select the camera image folder and a separate writable results folder.
 2. Choose Watch folder for incoming frames or Batch folder for a snapshot.
 3. Select Include existing and Subfolders as required, then Start inspection.
