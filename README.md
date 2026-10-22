@@ -1,6 +1,6 @@
 # C4 Inspector
 
-Windows desktop inspection tool for three fixed C4 die-surface regions, using
+Windows desktop inspection tool for three C4 die-surface regions, using
 PatchCore anomaly detection and CPU-only inference.
 
 ## Downloads
@@ -8,8 +8,8 @@ PatchCore anomaly detection and CPU-only inference.
 Download the portable Windows application or the separate model bundle from
 [Releases](https://github.com/syauqeehensem/C4-Inspector/releases).
 
-- `C4Inspector-v1.0.1-windows-x64.zip`: complete application, CPU runtime, and model.
-- `C4Inspector-model-v1.0.1.zip`: model weights and runtime metadata for source use.
+- `C4Inspector-v1.1.0-windows-x64.zip`: complete application, CPU runtime, and aligned model.
+- `C4Inspector-model-v1.1.0.zip`: weights, metadata, and alignment profiles for source use.
 
 For the portable application, extract the entire archive and run
 `C4Inspector.exe`. Keep `_internal` and `c4_model` beside it. Python, CUDA, and
@@ -38,13 +38,36 @@ triggers if any unit's raw score is **strictly greater than 42.89402770996094**.
 Scores are distances, not probabilities. Model weights are checked against the
 SHA-256 hash in the metadata when loaded.
 
+Version 1.1.0 uses bounded integer-pixel translation to register each die before
+scoring. Reference profiles are one-dimensional gradient summaries, not factory
+photographs. The profile hash is verified at load time. No interpolation is used
+for alignment. Weak, ambiguous, out-of-range, or out-of-bounds matches produce an
+ERROR, not a Good result. This does not correct rotation, scale, or perspective.
+
+## Tray Results
+
+The selected output folder contains `Result/Good`, `Result/Bad`, and `Result/Review`.
+Original-resolution tray copies are named `leftVID_middleVID_rightVID.jpg`, retaining
+the source extension and exact original bytes. Repeated captures receive a suffix;
+existing results are never overwritten. Each VID comes only from the lower-left
+rectangular Data Matrix. A tray enters Bad if any unit triggers, Good if none do,
+or Review if any VID is unreadable, conflicting, duplicate, or filename-unsafe.
+Good is a model routing label, not certification that a tray has no defects.
+
+JSON sidecars and the session CSV link each left-to-right VID with its score and
+outcome. JSON also retains decode status, source hash, actual/reference rectangles,
+alignment offsets and confidence, and evidence paths. Triggered-unit evidence is
+named by VID. Raw anomaly maps use translated original-frame crop coordinates.
+Source images and historical results are never changed or moved.
+
 ## Important Limitations
 
 **NO TRIGGER does not mean verified defect-free.** The chosen development model
 flagged one of two selected defective units and still missed a small single-spot
 defect. This is not an independent accuracy estimate. The model only inspects C4;
-surrounding boards/components are excluded. Fixed rectangles are not alignment
-or tracking. Heatmaps are not calibrated pixel-level defect classifications.
+surrounding boards/components are excluded. Translation registration is limited
+to the supplied layout and is not general tracking. Heatmaps are not calibrated
+pixel-level defect classifications.
 
 This is an operator alert, not a PLC signal, machine interlock, hard-real-time
 system, or guaranteed defect detector. Popups require an interactive desktop.
@@ -54,7 +77,8 @@ disk space, and alert visibility before operational use.
 ## Source Setup
 
 Use Python 3.13 x64 on Windows. Extract the separate model download into the
-repository so `c4_model/metadata.json` and `c4_model/patchcore.pt` exist.
+repository so `c4_model/metadata.json`, `c4_model/patchcore.pt`, and
+`c4_model/alignment.json` exist. Use the version 1.1.0 model bundle for alignment.
 
 ```powershell
 py -3.13 -m venv .c4-runtime-venv
@@ -91,13 +115,19 @@ disk space. They do not make the model independent of hardware or OS support.
 ## Hardware and Verification
 
 Intended evaluation hardware: Windows 10 Enterprise LTSC x64, Intel Core
-i5-9500TE at 2.20 GHz, 8 GB RAM. That exact PC's compatibility and throughput
-remain unverified. Local validation ran on a Windows 11 development workstation.
+i5-9500TE at 2.20 GHz, 8 GB RAM. The operator confirmed the corrected version
+1.0.1 runs there; version 1.1.0 still needs target-PC acceptance. Local validation
+ran on Windows 11.
 
-- 25 experiment and runtime/GUI tests passed; 10 runtime/GUI tests are included here.
+- 15 runtime/monitor/GUI tests are included here, including VID and alignment checks.
 - CPU export scores and maps matched the source CPU model on six checked crops.
-- CPU scoring of 204 normal calibration crops / 68 frames produced no frame flags
-  at the unchanged threshold. This is not independent false-alarm evidence.
+- Aligned CPU scoring of 204 normal calibration crops / 68 frames produced no model
+  flags; three frames required VID review. This is not independent false-alarm evidence.
+- All five saved production trigger frames (10 previously red units) aligned with
+  no model triggers at the unchanged threshold. The other production frames lacked
+  full-resolution originals in the result package and were not rescored.
+- The previously detected multi-spot defect still triggered after alignment;
+  the known small single-spot defect remains missed. No model retraining was done.
 - Local compute averaged about 0.85 seconds per three-unit frame, with about
   416 MiB peak process working memory, excluding GUI/evidence overhead.
 - Portable ZIP extraction to a different path, model loading, a known trigger,

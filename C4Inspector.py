@@ -131,7 +131,7 @@ class App:
         table.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         table.columnconfigure(0, weight=1)
         self.history = ttk.Treeview(table, columns=("image", "decision", "scores", "seconds"), show="headings", height=4)
-        for name, text, width in (("image", "Image", 300), ("decision", "Decision", 110),
+        for name, text, width in (("image", "Tray VIDs (left / middle / right)", 300), ("decision", "Decision", 110),
                       ("scores", "Raw unit scores (1 / 2 / 3)", 290), ("seconds", "Seconds", 85)):
             self.history.heading(name, text=text)
             self.history.column(name, width=width, minwidth=65, stretch=name == "image")
@@ -221,15 +221,21 @@ class App:
             self.status.set(f"CPU inspection active | {self.session_dir}")
         elif kind == "result":
             scores = " / ".join(f"{row['raw_score']:.4f}" for row in payload["units"])
-            decision = "TRIGGER" if payload["triggered"] else "NO TRIGGER"
-            item = self.history.insert("", 0, values=(Path(payload["source_path"]).name, decision, scores,
-                                                      f"{payload['elapsed_seconds']:.2f}"), tags=("trigger",) if payload["triggered"] else ())
+            decision = payload.get("tray_result", "TRIGGER" if payload["triggered"] else "NO TRIGGER")
+            identifiers = " / ".join(row.get("vid") or row.get("vid_status", "UNREADABLE") for row in payload["units"])
+            tags = ("error",) if decision == "Review" else (("trigger",) if payload["triggered"] else ())
+            item = self.history.insert("", 0, values=(identifiers, decision, scores,
+                                                      f"{payload['elapsed_seconds']:.2f}"), tags=tags)
             self.results[item] = payload
             self.trim_history()
             self.history.selection_set(item)
             self.select_result()
             if payload["triggered"]:
                 self.show_alert(payload)
+            if decision == "Review":
+                self.failed = True
+                self.status.set(f"VID needs review: {payload['source_path']}")
+                self.refresh_banner()
         elif kind == "file_error":
             self.failed = True
             self.history.insert("", 0, values=(Path(payload["source_path"]).name, "ERROR", payload["error"], ""), tags=("error",))
@@ -237,7 +243,7 @@ class App:
             self.status.set(f"Image not inspected: {payload['source_path']} | {payload['error']}")
             self.refresh_banner()
         elif kind == "counts":
-            self.metrics.set(f"Frames: {payload['processed']}    Triggers: {payload['triggers']}    Errors: {payload['errors']}    Pending: {payload['pending']}")
+            self.metrics.set(f"Frames: {payload['processed']}    Triggers: {payload['triggers']}    Review: {payload.get('reviews', 0)}    Errors: {payload['errors']}    Pending: {payload['pending']}")
         elif kind == "fatal":
             self.failed = True
             self.status.set(payload)
@@ -293,9 +299,9 @@ class App:
             self.alert.lift()
         flagged = [row for row in result["units"] if row["triggered"]]
         self.alert_heading.configure(text=f"C4 TRIGGER | {self.pending_alerts} unacknowledged frame(s)")
-        detail = " / ".join(f"Unit {row['unit']}: {row['raw_score']:.4f}" for row in flagged)
+        detail = " / ".join(f"{row.get('vid') or row.get('vid_status', 'UNREADABLE')}: {row['raw_score']:.4f}" for row in flagged)
         self.alert_detail.configure(text=f"{Path(result['source_path']).name}\n{detail} | Threshold {result['threshold_raw']:.6f}")
-        overlay = Path(result["result_dir"]) / f"unit_{flagged[0]['unit']}_overlay.jpg"
+        overlay = Path(result["result_dir"]) / f"{flagged[0]['artifact_name']}_overlay.jpg"
         try:
             with Image.open(overlay) as opened:
                 image = opened.convert("RGB")
@@ -349,7 +355,9 @@ class App:
             self.open_path(self.results[selected[0]]["result_dir"])
 
     def open_results(self):
-        path = self.session_dir or Path(self.output_var.get())
+        path = Path(self.output_var.get()) / "Result"
+        if not path.is_dir():
+            path = self.session_dir or Path(self.output_var.get())
         if path.is_dir():
             self.open_path(path)
 

@@ -4,6 +4,8 @@
 !/C4_INSPECTOR_README.md
 !/C4Inspector.py
 !/c4_runtime.py
+!/c4_identity.py
+!/c4_alignment.py
 !/c4_monitor.py
 !/heatmaps.py
 !/requirements-c4-gui.txt

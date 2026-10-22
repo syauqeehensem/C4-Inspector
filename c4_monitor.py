@@ -103,7 +103,7 @@ class InspectionWorker:
         self.watch, self.recursive = watch, recursive
         self.predictor_factory = predictor_factory
         self.inbox = FileInbox(source, recursive, include_existing, stable_seconds)
-        self.counts = {"processed": 0, "triggers": 0, "errors": 0}
+        self.counts = {"processed": 0, "triggers": 0, "errors": 0, "reviews": 0}
 
     def emit(self, kind, payload):
         self.events.put((kind, payload))
@@ -115,6 +115,8 @@ class InspectionWorker:
                 self.inbox.source = list(self.inbox.pending)
             predictor = self.predictor_factory(self.model_dir)
             self.output.mkdir(parents=True, exist_ok=True)
+            for decision in ("Good", "Bad", "Review"):
+                (self.output / "Result" / decision).mkdir(parents=True, exist_ok=True)
             session = self.output / (datetime.now().strftime("session_%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:8])
             session.mkdir()
             settings = {"created_utc": datetime.now(timezone.utc).isoformat(), "model": predictor.metadata,
@@ -125,7 +127,9 @@ class InspectionWorker:
             self.emit("ready", {"session_dir": str(session), "metadata": predictor.metadata})
             with (session / "inspection.csv").open("w", newline="", encoding="utf-8-sig") as stream:
                 fields = ["time_utc", "source_path", "result", "unit_1", "unit_2", "unit_3", "threshold_raw",
-                          "elapsed_seconds", "result_dir", "error"]
+                          "elapsed_seconds", "result_dir", "error", "tray_result", "tray_image_path"]
+                fields.extend(f"{name}_{unit}" for unit in range(1, 4)
+                              for name in ("vid", "vid_status", "outcome", "shift_x", "shift_y"))
                 writer = csv.DictWriter(stream, fieldnames=fields)
                 writer.writeheader()
                 while not self.stop.is_set():
@@ -149,10 +153,18 @@ class InspectionWorker:
                             result = save_inspection(inspection, session, predictor.metadata)
                             self.counts["processed"] += 1
                             self.counts["triggers"] += int(result["triggered"])
+                            self.counts["reviews"] += int(result["tray_result"] == "Review")
                             log.update(result="TRIGGER" if result["triggered"] else "NO TRIGGER",
                                        threshold_raw=result["threshold_raw"], elapsed_seconds=result["elapsed_seconds"],
-                                       result_dir=result["result_dir"])
+                                       result_dir=result["result_dir"], tray_result=result["tray_result"],
+                                       tray_image_path=result["tray_image_path"])
                             log.update({f"unit_{row['unit']}": row["raw_score"] for row in result["units"]})
+                            for row in result["units"]:
+                                unit = row["unit"]
+                                log.update({f"vid_{unit}": row["vid"], f"vid_status_{unit}": row["vid_status"],
+                                            f"outcome_{unit}": row["result"],
+                                            f"shift_x_{unit}": row["alignment"]["offset_xy"][0],
+                                            f"shift_y_{unit}": row["alignment"]["offset_xy"][1]})
                         writer.writerow(log)
                         stream.flush()
                         os.fsync(stream.fileno())

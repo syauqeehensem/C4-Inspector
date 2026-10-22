@@ -11,6 +11,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from c4_alignment import C4Aligner
+from c4_identity import read_unit_vid
 from heatmaps import render_heatmap, save_map
 
 
@@ -47,9 +49,23 @@ class Predictor:
         path = model_dir / "patchcore.pt"
         if sha256_file(path) != metadata["model_sha256"]:
             raise ValueError("C4 model checksum mismatch. Restore the supplied bundle.")
+        self.aligner = None
+        if metadata.get("alignment_sha256"):
+            alignment_path = model_dir / "alignment.json"
+            if sha256_file(alignment_path) != metadata["alignment_sha256"]:
+                raise ValueError("Alignment reference checksum mismatch. Restore the supplied bundle.")
+            self.aligner = C4Aligner(alignment_path)
         self.model = torch.jit.load(str(path), map_location="cpu").eval()
         self.mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
         self.std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+
+    def locate_unit(self, image, roi, unit):
+        if self.aligner is not None:
+            return self.aligner.locate(image, roi, unit)
+        return list(roi), {"method": "fixed_roi", "offset_xy": [0, 0], "reference_roi_xyxy": list(roi)}
+
+    def read_vid(self, image, roi):
+        return read_unit_vid(image, roi)
 
     def tensor(self, image):
         torch = self.torch
@@ -95,15 +111,29 @@ def inspect_frame(path, predictor):
     threshold = predictor.metadata["raw_threshold"]
     rows, units = [], []
     for unit, roi in enumerate(predictor.metadata["rois"], 1):
-        crop = image.crop(roi)
+        aligned_roi, alignment = predictor.locate_unit(image, roi, unit)
+        identity = predictor.read_vid(image, roi)
+        crop = image.crop(aligned_roi)
         score, raw_map = predictor.predict(crop)
         if not math.isfinite(score) or not np.isfinite(raw_map).all():
             raise ValueError("Non-finite inference output; frame has not passed inspection.")
-        rows.append({"unit": unit, "roi_xyxy": roi, "raw_score": score, "triggered": score > threshold})
+        rows.append({"unit": unit, "roi_xyxy": aligned_roi, "reference_roi_xyxy": list(roi),
+                     "alignment": alignment, **identity, "raw_score": score, "triggered": score > threshold,
+                     "model_result": "Bad" if score > threshold else "Good"})
         units.append((crop, raw_map))
+    identifiers = [row["vid"] for row in rows if row.get("vid")]
+    for row in rows:
+        if row.get("vid") and identifiers.count(row["vid"]) > 1:
+            row["vid_status"] = "DUPLICATE"
+        row["artifact_name"] = row["vid"] if row["vid_status"] == "READ" else f"REVIEW-position_{row['unit']}"
+        row["result"] = row["model_result"] if row["vid_status"] == "READ" else "Review"
+    tray_result = "Review" if any(row["result"] == "Review" for row in rows) else (
+        "Bad" if any(row["triggered"] for row in rows) else "Good")
     record = {"source_path": str(path), "source_sha256": hashlib.sha256(raw).hexdigest(),
               "source_size": after.st_size, "source_mtime_ns": after.st_mtime_ns,
-              "model_sha256": predictor.metadata.get("model_sha256"), "threshold_raw": threshold,
+              "model_sha256": predictor.metadata.get("model_sha256"),
+              "alignment_sha256": predictor.metadata.get("alignment_sha256"), "threshold_raw": threshold,
+              "tray_result": tray_result, "vids_left_to_right": [row.get("vid") for row in rows],
               "triggered": any(row["triggered"] for row in rows), "units": rows,
               "elapsed_seconds": time.monotonic() - start}
     return Inspection(record, image, units, raw)
@@ -123,10 +153,11 @@ def save_inspection(inspection, session_dir, metadata):
         preview = inspection.image.copy()
         draw = ImageDraw.Draw(preview)
         for row in record["units"]:
-            color = "#d6273f" if row["triggered"] else "#19855a"
+            color = "#b36b00" if row["result"] == "Review" else ("#d6273f" if row["triggered"] else "#19855a")
             draw.rectangle(row["roi_xyxy"], outline=color, width=10)
             left, top, _, _ = row["roi_xyxy"]
-            draw.text((left, top - 24), f"Unit {row['unit']}: {row['raw_score']:.4f}", fill=color, font_size=20)
+            draw.text((left, top - 24), f"{row.get('vid') or row['vid_status']}: {row['result']} {row['raw_score']:.4f}",
+                      fill=color, font_size=20)
         preview.thumbnail((1325, 444))
         preview.save(folder / "preview.jpg")
         if record["triggered"]:
@@ -134,13 +165,45 @@ def save_inspection(inspection, session_dir, metadata):
         for row, (crop, raw_map) in zip(record["units"], inspection.units):
             if not row["triggered"]:
                 continue
-            name = f"unit_{row['unit']}"
+            name = row["artifact_name"]
             crop.save(folder / f"{name}.png")
             _, overlay, _ = render_heatmap(crop, raw_map, metadata["pixel_min"], metadata["pixel_max"])
             overlay.save(folder / f"{name}_overlay.jpg")
             save_map(folder / f"{name}.npz", raw_map, roi=row["roi_xyxy"], source_size=inspection.image.size,
                      display_min=metadata["pixel_min"], display_max=metadata["pixel_max"],
                      score=row["raw_score"], raw_score=row["raw_score"], threshold=record["threshold_raw"])
-        (folder / "result.json").write_text(json.dumps(record, indent=2, allow_nan=False), encoding="utf-8")
+        tray_folder = Path(session_dir).parent / "Result" / record["tray_result"]
+        tray_folder.mkdir(parents=True, exist_ok=True)
+        stem = "_".join(row["artifact_name"] for row in record["units"])
+        suffix = Path(record["source_path"]).suffix.lower()
+        sequence = 0
+        while True:
+            collision = "" if sequence == 0 else f"__{identity}_{sequence}"
+            tray_path = tray_folder / (stem + collision + suffix)
+            sidecar = tray_path.with_suffix(".json")
+            if sidecar.exists():
+                sequence += 1
+                continue
+            try:
+                with tray_path.open("xb") as stream:
+                    try:
+                        stream.write(inspection.source_bytes)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    except OSError:
+                        stream.close()
+                        tray_path.unlink(missing_ok=True)
+                        raise
+                break
+            except FileExistsError:
+                sequence += 1
+        record = {**record, "tray_image_path": str(tray_path), "result_dir": str(destination),
+                  "preview_path": str(destination / "preview.jpg")}
+        serialized = json.dumps(record, indent=2, allow_nan=False)
+        (folder / "result.json").write_text(serialized, encoding="utf-8")
+        with sidecar.open("x", encoding="utf-8") as stream:
+            stream.write(serialized)
+            stream.flush()
+            os.fsync(stream.fileno())
         os.replace(folder, destination)
-    return {**record, "result_dir": str(destination), "preview_path": str(destination / "preview.jpg")}
+    return record

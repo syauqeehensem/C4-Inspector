@@ -1,14 +1,23 @@
 param(
     [string]$Python = (Join-Path $PSScriptRoot '.c4-runtime-venv\Scripts\python.exe'),
     [string]$DistRoot = (Join-Path $PSScriptRoot 'release'),
+    [string]$ModelDirectory = (Join-Path $PSScriptRoot 'c4_model'),
     [string]$VCRuntimeDirectory = (Join-Path $env:WINDIR 'System32')
 )
 $ErrorActionPreference = 'Stop'
 $destination = Join-Path $DistRoot 'C4Inspector'
 if (Test-Path $destination) { throw "Build destination already exists: $destination. Choose a new DistRoot." }
 if (-not (Test-Path $Python)) { throw 'Create the CPU-only environment described in C4_INSPECTOR_README.md first.' }
-if (-not (Test-Path (Join-Path $PSScriptRoot 'c4_model\metadata.json'))) { throw 'Export and verify the C4 model first.' }
-& $Python -c "import torch; assert torch.version.cuda is None, 'Build requires CPU-only PyTorch'"
+if (-not (Test-Path (Join-Path $ModelDirectory 'metadata.json'))) { throw 'Supply the verified aligned C4 model bundle first.' }
+& $Python -c @'
+import sys
+import cv2
+import torch
+import zxingcpp
+from c4_runtime import Predictor
+assert torch.version.cuda is None, 'Build requires CPU-only PyTorch'
+assert Predictor(sys.argv[1]).aligner is not None, 'Build requires the aligned model bundle'
+'@ $ModelDirectory
 if ($LASTEXITCODE -ne 0) { throw 'CPU environment check failed.' }
 $runtimeFiles = foreach ($runtimeName in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'vcruntime140_threads.dll')) {
     $runtimePath = Join-Path $VCRuntimeDirectory $runtimeName
@@ -28,7 +37,11 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
     (Join-Path $PSScriptRoot 'C4Inspector.py')
 if ($LASTEXITCODE -ne 0) { throw 'Executable build failed.' }
 Copy-Item -Path $runtimeFiles -Destination (Join-Path $destination '_internal') -Force
-Copy-Item -Recurse (Join-Path $PSScriptRoot 'c4_model') (Join-Path $destination 'c4_model')
+$packagedModel = Join-Path $destination 'c4_model'
+New-Item -ItemType Directory -Path $packagedModel | Out-Null
+foreach ($modelFile in @('patchcore.pt', 'metadata.json', 'alignment.json')) {
+    Copy-Item (Join-Path $ModelDirectory $modelFile) $packagedModel
+}
 Copy-Item (Join-Path $PSScriptRoot 'C4_INSPECTOR_README.md') $destination
 & $Python -m pip freeze | Set-Content -Encoding UTF8 (Join-Path $destination 'runtime-installed.txt')
 if ($LASTEXITCODE -ne 0) { throw 'Environment inventory failed.' }
