@@ -131,7 +131,7 @@ class App:
         table.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         table.columnconfigure(0, weight=1)
         self.history = ttk.Treeview(table, columns=("image", "decision", "scores", "seconds"), show="headings", height=4)
-        for name, text, width in (("image", "Tray VIDs (left / middle / right)", 300), ("decision", "Decision", 110),
+        for name, text, width in (("image", "Unit VIDs (left / middle / right)", 300), ("decision", "Decision", 110),
                       ("scores", "Raw unit scores (1 / 2 / 3)", 290), ("seconds", "Seconds", 85)):
             self.history.heading(name, text=text)
             self.history.column(name, width=width, minwidth=65, stretch=name == "image")

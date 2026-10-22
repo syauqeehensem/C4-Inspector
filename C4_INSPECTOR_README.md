@@ -35,7 +35,10 @@ Good. The model and alignment-profile hashes are checked before inspection.
 The selected output folder contains `Result/Good`, `Result/Bad`, and `Result/Review`.
 Tray images retain exact source bytes and are named
 `leftVID_middleVID_rightVID.jpg`, using the original extension. The confirmed VID
-is the lower-left rectangular Data Matrix, not the upper-left square code.
+identifies one unit, not a tray, and is read from that unit's lower-left
+rectangular Data Matrix, not the upper-left square code. The filename combines
+the three independent unit VIDs in left-to-right order. Version 1.1.1 labels
+the GUI history column Unit VIDs; inspection and sorting behavior are unchanged.
 Repeated captures get a suffix instead of overwriting existing files. A tray is
 Bad if any unit triggers, Good if none trigger, or Review if any VID is unreadable,
 conflicting, duplicate, or filename-unsafe. Good is not defect-free certification.

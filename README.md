@@ -8,8 +8,8 @@ PatchCore anomaly detection and CPU-only inference.
 Download the portable Windows application or the separate model bundle from
 [Releases](https://github.com/syauqeehensem/C4-Inspector/releases).
 
-- `C4Inspector-v1.1.0-windows-x64.zip`: complete application, CPU runtime, and aligned model.
-- `C4Inspector-model-v1.1.0.zip`: weights, metadata, and alignment profiles for source use.
+- `C4Inspector-v1.1.1-windows-x64.zip`: complete application, CPU runtime, and aligned model.
+- `C4Inspector-model-v1.1.1.zip`: unchanged weights, metadata, and alignment profiles for source use.
 
 For the portable application, extract the entire archive and run
 `C4Inspector.exe`. Keep `_internal` and `c4_model` beside it. Python, CUDA, and
@@ -45,6 +45,9 @@ for alignment. Weak, ambiguous, out-of-range, or out-of-bounds matches produce a
 ERROR, not a Good result. This does not correct rotation, scale, or perspective.
 
 ## Tray Results
+
+A VID identifies one unit, not a tray. A tray image filename combines the three
+individual unit VIDs in left-to-right order; it is not a tray-level identifier.
 
 The selected output folder contains `Result/Good`, `Result/Bad`, and `Result/Review`.
 Original-resolution tray copies are named `leftVID_middleVID_rightVID.jpg`, retaining

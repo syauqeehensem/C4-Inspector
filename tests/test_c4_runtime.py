@@ -227,6 +227,7 @@ class C4RuntimeTests(unittest.TestCase):
         self.addCleanup(root.destroy)
         app = App(root, model_dir=self.root, settings_path=self.root / "settings.json")
         self.addCleanup(lambda: root.after_cancel(app.poll_id))
+        self.assertEqual(app.history.heading("image", "text"), "Unit VIDs (left / middle / right)")
         app.sound_var.set(False)
         predictor = FakePredictor()
         result = save_inspection(inspect_frame(self.path, predictor), self.root / "session", predictor.metadata)
