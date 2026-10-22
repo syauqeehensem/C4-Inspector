@@ -1,0 +1,13 @@
+*
+!/.gitignore
+!/README.md
+!/C4_INSPECTOR_README.md
+!/C4Inspector.py
+!/c4_runtime.py
+!/c4_monitor.py
+!/heatmaps.py
+!/requirements-c4-gui.txt
+!/build_c4_inspector.ps1
+!/Launch_C4_Inspector.cmd
+!/tests/
+!/tests/test_c4_runtime.py
