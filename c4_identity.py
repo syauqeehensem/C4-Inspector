@@ -1,24 +1,28 @@
-"""Read the operator-confirmed lower-left unit Data Matrix."""
+"""Read the operator-confirmed unit VID Data Matrix inside a product-specific rectangle."""
 import re
 
 import numpy as np
 from PIL import Image
 
 
-def read_unit_vid(image, roi):
+def read_vid(image, box):
     import zxingcpp
 
-    left, _, _, bottom = roi
-    box = (left - 270, bottom - 320, left + 60, bottom + 260)
+    box = [int(value) for value in box]
     if not (0 <= box[0] < box[2] <= image.width and 0 <= box[1] < box[3] <= image.height):
-        return {"vid": None, "vid_status": "OUT_OF_BOUNDS", "vid_roi_xyxy": list(box)}
+        return {"vid": None, "vid_status": "OUT_OF_BOUNDS", "vid_roi_xyxy": box}
     crop = image.crop(box).convert("L")
     payloads = set()
-    for scale in (1, 2, 4):
-        resized = crop.resize((crop.width * scale, crop.height * scale), Image.Resampling.NEAREST)
-        symbols = zxingcpp.read_barcodes(np.asarray(resized), formats=zxingcpp.BarcodeFormat.DataMatrix,
-                                        try_rotate=True, try_downscale=True, try_invert=True)
-        payloads.update(bytes(symbol.bytes) for symbol in symbols if symbol.valid)
+    # Smooth upscaling recovers small M4G codes that nearest-neighbour scaling misses.
+    for attempts in ([(scale, Image.Resampling.NEAREST) for scale in (1, 2, 4)],
+                     [(scale, Image.Resampling.BICUBIC) for scale in (2, 3)]):
+        for scale, method in attempts:
+            resized = crop.resize((crop.width * scale, crop.height * scale), method)
+            symbols = zxingcpp.read_barcodes(np.asarray(resized), formats=zxingcpp.BarcodeFormat.DataMatrix,
+                                            try_rotate=True, try_downscale=True, try_invert=True)
+            payloads.update(bytes(symbol.bytes) for symbol in symbols if symbol.valid)
+        if payloads:
+            break
     result = {"vid": None, "vid_status": "UNREADABLE", "vid_roi_xyxy": list(box),
               "vid_payloads_hex": [payload.hex() for payload in sorted(payloads)]}
     if len(payloads) > 1:

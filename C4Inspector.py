@@ -1,4 +1,4 @@
-"""Standalone desktop C4 inspection with CPU inference and acknowledged trigger alerts."""
+"""Standalone desktop EMRXCP/M4G inspection with CPU inference and acknowledged trigger alerts."""
 import argparse
 import json
 import os
@@ -30,7 +30,7 @@ def configure_display():
 class App:
     def __init__(self, root, model_dir=None, settings_path=None):
         self.root = root
-        self.model_dir = Path(model_dir) if model_dir else app_directory() / "c4_model"
+        self.model_dir = Path(model_dir) if model_dir else app_directory() / "models"
         self.settings_path = Path(settings_path) if settings_path else Path(
             os.environ.get("LOCALAPPDATA", str(Path.home()))) / "IOMC4Inspector/settings.json"
         self.events = queue.Queue(maxsize=16)
@@ -44,7 +44,7 @@ class App:
         self.pending_alerts = 0
         self.alert = None
         self.preview = self.photo = self.alert_photo = None
-        self.root.title("Input Shuttle | C4 Inspection")
+        self.root.title("Input Shuttle | C4 Inspector: EMRXCP and M4G")
         self.root.geometry("1120x700")
         self.root.minsize(900, 600)
         self.root.configure(background="#f3f5f4")
@@ -65,14 +65,17 @@ class App:
         self.popup_var = tk.BooleanVar(value=True)
         self.sound_var = tk.BooleanVar(value=True)
         self.status = tk.StringVar(value="Idle")
-        self.metrics = tk.StringVar(value="Frames: 0    Triggers: 0    Errors: 0    Pending: 0")
-        self.model_text = tk.StringVar(value="C4 model unavailable")
+        self.metrics = tk.StringVar(value="Frames: 0    Triggers: 0    Review: 0    Errors: 0    Pending: 0")
+        self.model_text = tk.StringVar(value="Model bundle unavailable")
         self.load_settings()
         self.mutable = []
         self.build()
         try:
-            metadata = json.loads((self.model_dir / "metadata.json").read_text(encoding="utf-8"))
-            self.model_text.set(f"{metadata['name']}   |   CPU   |   Raw threshold {metadata['raw_threshold']:.6f}")
+            bundle = json.loads((self.model_dir / "products.json").read_text(encoding="utf-8"))
+            products = ", ".join(" + ".join([product["name"], *(area["name"] + (" (monitor)" if area.get("mode") == "monitor" else "")
+                                                                for area in product["areas"])])
+                                 for product in bundle["products"])
+            self.model_text.set(f"{products}   |   CPU   |   auto product detection")
         except (OSError, ValueError, KeyError, TypeError):
             pass
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -131,8 +134,8 @@ class App:
         table.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         table.columnconfigure(0, weight=1)
         self.history = ttk.Treeview(table, columns=("image", "decision", "scores", "seconds"), show="headings", height=4)
-        for name, text, width in (("image", "Unit VIDs (left / middle / right)", 300), ("decision", "Decision", 110),
-                      ("scores", "Raw unit scores (1 / 2 / 3)", 290), ("seconds", "Seconds", 85)):
+        for name, text, width in (("image", "Product: unit VIDs in order", 360), ("decision", "Decision", 100),
+                      ("scores", "Score / threshold by unit (>1 triggers)", 300), ("seconds", "Seconds", 75)):
             self.history.heading(name, text=text)
             self.history.column(name, width=width, minwidth=65, stretch=name == "image")
         self.history.tag_configure("trigger", foreground="#b42037")
@@ -220,11 +223,11 @@ class App:
             self.session_dir = Path(payload["session_dir"])
             self.status.set(f"CPU inspection active | {self.session_dir}")
         elif kind == "result":
-            scores = " / ".join(f"{row['raw_score']:.4f}" for row in payload["units"])
+            scores = " / ".join(f"{row['score_ratio']:.3f}" for row in payload["units"])
             decision = payload.get("tray_result", "TRIGGER" if payload["triggered"] else "NO TRIGGER")
             identifiers = " / ".join(row.get("vid") or row.get("vid_status", "UNREADABLE") for row in payload["units"])
             tags = ("error",) if decision == "Review" else (("trigger",) if payload["triggered"] else ())
-            item = self.history.insert("", 0, values=(identifiers, decision, scores,
+            item = self.history.insert("", 0, values=(f"{payload['product']}: {identifiers}", decision, scores,
                                                       f"{payload['elapsed_seconds']:.2f}"), tags=tags)
             self.results[item] = payload
             self.trim_history()
@@ -234,7 +237,7 @@ class App:
                 self.show_alert(payload)
             if decision == "Review":
                 self.failed = True
-                self.status.set(f"VID needs review: {payload['source_path']}")
+                self.status.set(f"Needs review (VID or alignment): {payload['source_path']}")
                 self.refresh_banner()
         elif kind == "file_error":
             self.failed = True
@@ -297,11 +300,13 @@ class App:
             self.alert_ack = ttk.Button(self.alert, text="Acknowledge", command=self.acknowledge)
             self.alert_ack.grid(row=3, column=0, pady=10)
             self.alert.lift()
-        flagged = [row for row in result["units"] if row["triggered"]]
-        self.alert_heading.configure(text=f"C4 TRIGGER | {self.pending_alerts} unacknowledged frame(s)")
-        detail = " / ".join(f"{row.get('vid') or row.get('vid_status', 'UNREADABLE')}: {row['raw_score']:.4f}" for row in flagged)
-        self.alert_detail.configure(text=f"{Path(result['source_path']).name}\n{detail} | Threshold {result['threshold_raw']:.6f}")
-        overlay = Path(result["result_dir"]) / f"{flagged[0]['artifact_name']}_overlay.jpg"
+        flagged = [(row, area) for row in result["units"] for area in row["areas"] if area["triggered"]]
+        self.alert_heading.configure(text=f"{result['product']} TRIGGER | {self.pending_alerts} unacknowledged frame(s)")
+        detail = " / ".join(f"{row.get('vid') or row.get('vid_status', 'UNREADABLE')} {area['area']}: "
+                            f"{area['raw_score']:.4f} > {area['threshold_raw']:.4f}" for row, area in flagged)
+        self.alert_detail.configure(text=f"{Path(result['source_path']).name}\n{detail}")
+        row, area = flagged[0]
+        overlay = Path(result["result_dir"]) / f"{row['artifact_name']}_{area['area']}_overlay.jpg"
         try:
             with Image.open(overlay) as opened:
                 image = opened.convert("RGB")
@@ -389,14 +394,14 @@ class App:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-dir", type=Path, default=app_directory() / "c4_model")
+    parser.add_argument("--model-dir", type=Path, default=app_directory() / "models")
     parser.add_argument("--check-image", type=Path, help="Inspect one full frame without opening the GUI.")
     parser.add_argument("--report", type=Path, help="Write the command-line image check to JSON.")
     arguments = parser.parse_args()
     if arguments.check_image:
-        from c4_runtime import Predictor, inspect_frame
+        from c4_runtime import ProductPredictor, inspect_frame
         try:
-            predictor = Predictor(arguments.model_dir)
+            predictor = ProductPredictor(arguments.model_dir)
             record = inspect_frame(arguments.check_image, predictor).record
             report = {"ok": True, "device": "cpu", "torch_version": predictor.torch.__version__, **record}
         except Exception as exc:

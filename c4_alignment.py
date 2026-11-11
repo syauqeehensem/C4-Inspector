@@ -52,8 +52,8 @@ class C4Aligner:
             raise ValueError("Unsupported alignment reference.")
         if self.config.get("maximum_shift") != 64 or self.config.get("margin") != 80:
             raise ValueError("Unsupported alignment search limits.")
-        if len(self.config.get("units", [])) != 3:
-            raise ValueError("Alignment requires three unit profiles.")
+        if not self.config.get("units"):
+            raise ValueError("Alignment requires unit profiles.")
 
     def locate(self, image, roi, unit):
         reference = self.config["units"][unit - 1]
@@ -66,6 +66,6 @@ class C4Aligner:
         horizontal, quality_x = axis_offset(reference["x"], observed_x, 64)
         aligned = [left + horizontal, top + vertical, right + horizontal, bottom + vertical]
         if not (0 <= aligned[0] < aligned[2] <= image.width and 0 <= aligned[1] < aligned[3] <= image.height):
-            raise ValueError("Aligned C4 rectangle is outside the image.")
+            raise ValueError("Aligned rectangle is outside the image.")
         return aligned, {"method": "integer_boundary_profiles", "offset_xy": [horizontal, vertical],
                          "correlation_xy": [quality_x, quality_y], "reference_roi_xyxy": list(roi)}

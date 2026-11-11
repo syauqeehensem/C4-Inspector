@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from c4_runtime import Predictor, inspect_frame, save_inspection
+from c4_runtime import ProductPredictor, inspect_frame, save_inspection
 
 
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
@@ -96,7 +96,7 @@ def validate_folders(source, output):
 
 class InspectionWorker:
     def __init__(self, model_dir, source, output, events, stop, watch=False,
-                 include_existing=True, recursive=False, predictor_factory=Predictor, stable_seconds=2):
+                 include_existing=True, recursive=False, predictor_factory=ProductPredictor, stable_seconds=2):
         validate_folders(source, output)
         self.model_dir, self.source, self.output = Path(model_dir), source, Path(output)
         self.events, self.stop = events, stop
@@ -126,10 +126,11 @@ class InspectionWorker:
             (session / "session.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
             self.emit("ready", {"session_dir": str(session), "metadata": predictor.metadata})
             with (session / "inspection.csv").open("w", newline="", encoding="utf-8-sig") as stream:
-                fields = ["time_utc", "source_path", "result", "unit_1", "unit_2", "unit_3", "threshold_raw",
-                          "elapsed_seconds", "result_dir", "error", "tray_result", "tray_image_path"]
-                fields.extend(f"{name}_{unit}" for unit in range(1, 4)
-                              for name in ("vid", "vid_status", "outcome", "shift_x", "shift_y"))
+                unit_count = max(len(predictor.units(product["name"])) for product in predictor.metadata["products"])
+                fields = ["time_utc", "source_path", "product", "result", "tray_result", "elapsed_seconds",
+                          "result_dir", "tray_image_path", "error"]
+                fields.extend(f"{name}_{unit}" for unit in range(1, unit_count + 1)
+                              for name in ("vid", "vid_status", "outcome", "ratio", "scores", "shift_x", "shift_y"))
                 writer = csv.DictWriter(stream, fieldnames=fields)
                 writer.writeheader()
                 while not self.stop.is_set():
@@ -150,20 +151,21 @@ class InspectionWorker:
                         except ValueError as exc:
                             log.update(result="ERROR", error=str(exc))
                         else:
-                            result = save_inspection(inspection, session, predictor.metadata)
+                            result = save_inspection(inspection, session)
                             self.counts["processed"] += 1
                             self.counts["triggers"] += int(result["triggered"])
                             self.counts["reviews"] += int(result["tray_result"] == "Review")
-                            log.update(result="TRIGGER" if result["triggered"] else "NO TRIGGER",
-                                       threshold_raw=result["threshold_raw"], elapsed_seconds=result["elapsed_seconds"],
-                                       result_dir=result["result_dir"], tray_result=result["tray_result"],
-                                       tray_image_path=result["tray_image_path"])
-                            log.update({f"unit_{row['unit']}": row["raw_score"] for row in result["units"]})
+                            log.update(product=result["product"], result="TRIGGER" if result["triggered"] else "NO TRIGGER",
+                                       elapsed_seconds=result["elapsed_seconds"], result_dir=result["result_dir"],
+                                       tray_result=result["tray_result"], tray_image_path=result["tray_image_path"])
                             for row in result["units"]:
                                 unit = row["unit"]
+                                scores = "; ".join(f"{area['area']}{' (monitor)' if area['mode'] == 'monitor' else ''} "
+                                                   f"{area['raw_score']:.4f}/{area['threshold_raw']:.4f}"
+                                                   for area in row["areas"])
                                 log.update({f"vid_{unit}": row["vid"], f"vid_status_{unit}": row["vid_status"],
-                                            f"outcome_{unit}": row["result"],
-                                            f"shift_x_{unit}": row["alignment"]["offset_xy"][0],
+                                            f"outcome_{unit}": row["result"], f"ratio_{unit}": round(row["score_ratio"], 6),
+                                            f"scores_{unit}": scores, f"shift_x_{unit}": row["alignment"]["offset_xy"][0],
                                             f"shift_y_{unit}": row["alignment"]["offset_xy"][1]})
                         writer.writerow(log)
                         stream.flush()
